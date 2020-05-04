@@ -1,0 +1,6 @@
+sudo vmhgfs-fuse .host:/ /mnt/hgfs/ -o allow_other -o uid=1000  ### make files in shared folder visuable
+
+/home/lingtao/soybean/TrimGalore-0.6.5/trim_galore -o /home/lingtao/soybean/Trim_results/ --fastqc --gzip /mnt/hgfs/VMFolder/SRR2038186.fastq.gz
+STAR --genomeDir /mnt/hgfs/VMFolder/star_genome_indx --readFilesCommand zcat --readFilesIn /home/lingtao/soybean/Trim_results/SRR2038186_trimmed.fq.gz --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --runThreadN 20
+mv ReadsPerGene.out.tab /home/lingtao/soybean/STAR_Results/SRR2038186_ReadsPerGene.out.tab
+rm /home/lingtao/soybean/Trim_results/SRR2038186_trimmed.fq.gz
