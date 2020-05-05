@@ -55,8 +55,471 @@ write.table(mycounts, file = "rpkm.txt", dec = ".", sep = "\t", quote = FALSE)
 #### end
 
 
+Soyban Development stages analysis
+DeStagecounts<-read.table("DeStage_Exp_count.txt", header=T,row.names=1, sep="\t")
+con <- file("Biosample_Develop_Stages.txt", "r", blocking = FALSE)
+DeStages= readLines(con)## GSE names in GPL4592
+close(con)
+dgList <- DGEList(counts=DeStagecounts, genes=rownames(DeStagecounts))
+dgList <- calcNormFactors(dgList)
+exon.lengths2<-read.table("STAR_gene_length.txt", header=F,row.names=1, sep="\t")
+exon.lengths3<-as.numeric(exon.lengths2$V2)
+dgList$genes$Length <- exon.lengths3
+DeStagerpkmMatrix <- rpkm(dgList)
+newff <- read.table("colnames_stages.txt", head=F,sep="\t") #get Tiss/Dev corresponding names
+#newff <- read.table("colnames_tissue.txt", head=F,sep="\t") #get Tiss/Dev corresponding names
+ffnew<-as.factor(newff$V1)
+colnames(DeStagerpkmMatrix) <- ffnew
+
+#### get sample number of each type of Tissue/Devstage
+TDnum<-c()
+for(i in 1:length(DeStages))
+{
+inx<-which(colnames(DeStagerpkmMatrix)==DeStages[i])
+TDnum<-c(TDnum,length(inx))
+}
+barplot(TDnum,horiz=F,main="Sample number of each Development Stages",xlab="Development Stages", ylab="Counts", col=rainbow(length(DeStages)),names.arg=DeStages,las=2)#las change label direction
+pie(TDnum，labels = DeStages, col=rainbow(length(DeStages)),main="Sample Number of each Development Stages")
+
+#### mean rpkm values for each Tiss/Devstage
+fReplicateMean <- function(rpkmMat,DeStages,thrs) #Thrs: threshold
+{
+x<-matrix(, nrow = dim(rpkmMat)[1], ncol =length(DeStages))
+for(i in 1:length(DeStages))
+{
+#x[,i]<-rowMeans(rpkmMat[,regexpr(DeStages[i],colnames(rpkmMat))>0])# some Tiss/Devstages with only one sample
+inx<-which(colnames(rpkmMat)==DeStages[i])## get postions
+if(length(inx)>1)
+{
+x[,i]<-rowMeans(rpkmMat[,inx])# some Tiss/Devstages with only one sample
+}else
+{
+x[,i]<-rpkmMat[,inx]
+}
+}
+colnames(x)<-DeStages
+rownames(x)<-rownames(rpkmMat)
+x[x<thrs]<-1
+x<-log2(x)
+return(x)
+}
+
+#Function require a vector with expression of one gene in different tissues.
+#If expression for one tissue is not known, gene specificity for this gene is NA
+#Minimum 2 tissues
+fTau <- function(x)
+{
+	if(all(!is.na(x)))
+ 	{
+ 		if(min(x, na.rm=TRUE) >= 0)
+		{
+ 			if(max(x)!=0)
+ 			{
+ 				x <- (1-(x/max(x)))
+ 				res <- sum(x, na.rm=TRUE)
+ 				res <- res/(length(x)-1)
+ 			} else {
+ 				res <- 0
+ 			}
+ 		} else {
+ 		res <- NA
+ 		#print("Expression values have to be positive!")
+ 		} 
+ 	} else {
+ 		res <- NA
+ 		#print("No data for this gene avalable.")
+ 	} 
+ 	return(res)
+}
+###***###***###
+DeStagerpkmMatrixmean<-fReplicateMean(DeStagerpkmMatrix,DeStages,1)
+print(summary(DeStagerpkmMatrixmean))
+geTau <- apply(DeStagerpkmMatrixmean, 1, fTau) # 1 means row direction,get a one way vector, max 1 means genes only expressed in one tissue,genes with express value !=0.
+#### filter tissue specifity genes from Tau resuls
+TsG<-function(NorM,Tauvalue,thrsF)#NorM is fReplicateMean normalized matrix,thrsF if gene filter threshold thrsF=1 means strictly Tissue specifity expression, ie expression only in one Tissue/DeStage
+{
+GM<-matrix(list(),nrow = dim(NorM)[2], ncol =1)# GM is the genes in each Tiss/Devstage
+for(i in 1:length(geTau))
+{
+if(geTau[i]>=thrsF)
+{
+gExVs<-NorM[i,] # get all exp values of the gene 
+if(thrsF==1)
+{
+tempMax<-max(gExVs)
+indx<-which(gExVs==tempMax)
+temp<-c(GM[[indx]],rownames(NorM)[i])
+GM[[indx]]<-temp
+}else
+{
+tempQ<-quantile(gExVs)[4]# 75% quantile value
+indx2<-which(gExVs>tempQ)
+for(j in 1:length(indx2))
+{
+temp<-c(GM[[indx2[j]]],rownames(NorM)[i])
+GM[[indx2[j]]]<-temp
+}
+}
+}
+}
+return (GM)
+}
+
+DeStageresults<-TsG(DeStagerpkmMatrixmean,geTau,0.9)
+write.table(DeStageresults,file="DeStageresults.txt",row.names=T,sep="\t")
+
+#Figures for Devestage Specific genes
+### Figure 1: geTau thrs change and tissue specific gene number
+thrs<-c(1,0.95,0.9,0.85,0.8)
+GNum<-matrix(,nrow=length(DeStages),ncol=length(thrs))
+col<-1 # col number
+for(val in thrs)
+{
+DeStageresults<-TsG(DeStagerpkmMatrixmean,geTau,val)
+temp<-c()
+for(i in 1:length(DeStageresults))
+{
+temp<-c(temp,length(DeStageresults[[i]]))
+}
+GNum[,col]<-temp
+col<-col+1
+}
+rownames(GNum)<-DeStages
+colnames(GNum)<-thrs
+write.table(GNum,file="Devstage specific GeneNumber under diff thrs.txt",row.names=T,sep="\t")
+barplot(GNum, beside=T,main="Develop stages gene specific number under different threshold", col=rainbow(length(DeStages)),xlab="threshold",ylab="counts")#las change label direction)
+## we choose thrs=0.9 ,0.8 is usually as others do.
+### Figure 2: Total number of genes detetected in develop stages, and their appear times
+DeStageresults<-TsG(DeStagerpkmMatrixmean,geTau,0.9)
+#write.table(DeStageresults,file="DeStageresults_0.9.txt",row.names=T,sep="\t")
+GApp<-c()
+for(i in 1:length(DeStageresults))
+{
+GApp<-c(GApp,DeStageresults[[i]])
+}
+DevGene<-unique(GApp) ## with thrs=0.9 we get total 5838 genes with Develop stages specific
+Ap<-c()
+ApM<-matrix(,nrow=length(DevGene),ncol=1)
+for(i in 1:length(DevGene))
+{
+teminx<-which(GApp==DevGene[i])
+Ap<-c(Ap,length(teminx))
+}
+ApM[,1]<-Ap
+rownames(ApM)<-DevGene
+colnames(ApM)<-"Count"
+write.table(ApM,file="Gene Appearance Times in Devstage.txt",row.names=T,sep="\t")
+
+ApT<-unique(Ap)
+GApT<-c()
+GApTM<-matrix(,nrow=length(ApT),ncol=1)
+for(i in 1:length(ApT))
+{
+teminx<-which(Ap==ApT[i])
+GApT<-c(GApT,length(teminx))
+}
+GApTM[,1]<-GApT
+rownames(GApTM)<-ApT
+colnames(GApTM)<-"Gene Number"
+write.table(GApTM,file="Gene Appearance Times in Devstage statistic.txt",row.names=T,sep="\t")
 
 
+#### Figure3: Common genes between any two devstage, clustered heatmap 
+ComGMatrix<-matrix(0,nrow = length(DeStages), ncol =length(DeStages))
+for(i in 1:length(DeStageresults))
+{
+for(j in i:length(DeStageresults))
+{
+temcom<-length(intersect(DeStageresults[[i]],DeStageresults[[j]]))
+ComGMatrix[i,j]<-temcom 
+ComGMatrix[j,i]<-temcom
+}
+}
+library("gplots")
+#result <- heatmap.2(mtscaled, Rowv=T, scale='none', dendrogram="row", symm = T, col = brewer.pal(9,"Reds"))
+library(ComplexHeatmap)
+colnames(ComGMatrix)<-DeStages
+rownames(ComGMatrix)<-DeStages
+Heatmap(ComGMatrix, name = "Common Genes between different DevStages", row_names_gp = gpar(fontsize = 6),column_names_gp = gpar(fontsize = 6))
+
+
+#### GO enrichment of each Devstage specific genes
+library(topGO)
+geneID2GO <- readMappings(file = "C:/Users/sulin/Desktop/geneid2go2.map")
+probeNames <- names(geneID2GO)
+for(i in 1:length(DeStageresults))
+{
+AllDifg= DeStageresults[[i]]
+geneList <- factor(as.integer(probeNames %in% AllDifg))
+names(geneList) <- probeNames
+str(geneList)
+GOdata <- new("topGOdata", ontology = "BP", allGenes = geneList,annot = annFUN.gene2GO, gene2GO = geneID2GO)
+resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+test.stat <- new("classicScore", testStatistic = GOKSTest, name = "KS tests")
+resultGO <- getSigGroups(GOdata, test.stat)
+test.stat <- new("weightCount", testStatistic = GOFisherTest, name = "Fisher test", sigRatio = "ratio")
+resultWeight <- getSigGroups(GOdata, test.stat)
+resulttopGO<- GenTable(GOdata, classic = resultFisher, KS = resultGO, weight = resultWeight,orderBy = "weight", ranksOf = "classic", topNodes = 20)
+write.table(resulttopGO[resulttopGO$classic<0.01,],file=paste("Gene_Devstage",i,"_Gene_GO_Enrichment.txt",sep=""),row.names = FALSE, col.names =TRUE)
+}
+
+
+
+######SOybean RNAseq Tissue analysis
+
+Soyban Tissue analysis
+
+Tissuecounts<-read.table("Tissue_Exp_count.txt", header=T,row.names=1, sep="\t")
+con <- file("Biosample_Tissues.txt", "r", blocking = FALSE)
+Tissues= readLines(con)## RNAseq Tissues
+close(con)
+dgList <- DGEList(counts=Tissuecounts, genes=rownames(Tissuecounts))
+dgList <- calcNormFactors(dgList)
+exon.lengths2<-read.table("STAR_gene_length.txt", header=F,row.names=1, sep="\t")
+exon.lengths3<-as.numeric(exon.lengths2$V2)
+dgList$genes$Length <- exon.lengths3
+TissuerpkmMatrix <- rpkm(dgList)
+#newff <- read.table("colnames_stages.txt", head=F,sep="\t") #get Tiss/Dev corresponding names
+newff <- read.table("colnames_tissue.txt", head=F,sep="\t") #get Tiss/Dev corresponding names
+ffnew<-as.factor(newff$V1)
+colnames(TissuerpkmMatrix) <- ffnew
+
+#### get sample number of each type of Tissue/Devstage
+TDnum<-c()
+TDnumM<-matrix(,nrow=length(Tissues),ncol=1)
+for(i in 1:length(Tissues))
+{
+inx<-which(colnames(TissuerpkmMatrix)==Tissues[i])
+TDnum<-c(TDnum,length(inx))
+}
+TDnumM[,1]<-TDnum
+rownames(TDnumM)<-Tissues
+colnames(TDnumM)<-"Sample Number"
+write.table(TDnumM,file="Sample number of each tissue.txt",row.names=T,sep="\t")
+barplot(TDnum,horiz=F,main="Sample number of each Tissues",xlab="Tissues", ylab="Counts", col=rainbow(length(Tissues)),names.arg=Tissues,las=2)#las change label direction
+pie(TDnum，labels = Tissues, col=rainbow(length(Tissues)),main="Sample Number of each Tissue")
+
+#### mean rpkm values for each Tissue
+fReplicateMean <- function(rpkmMat,DeStages,thrs) #Thrs: threshold
+{
+x<-matrix(, nrow = dim(rpkmMat)[1], ncol =length(DeStages))
+for(i in 1:length(DeStages))
+{
+#x[,i]<-rowMeans(rpkmMat[,regexpr(DeStages[i],colnames(rpkmMat))>0])# some Tiss/Devstages with only one sample
+inx<-which(colnames(rpkmMat)==DeStages[i])## get postions
+if(length(inx)>1)
+{
+x[,i]<-rowMeans(rpkmMat[,inx])# some Tiss/Devstages with only one sample
+}else
+{
+x[,i]<-rpkmMat[,inx]
+}
+}
+colnames(x)<-DeStages
+rownames(x)<-rownames(rpkmMat)
+x[x<thrs]<-1
+x<-log2(x)
+return(x)
+}
+
+#Function require a vector with expression of one gene in different tissues.
+#If expression for one tissue is not known, gene specificity for this gene is NA
+#Minimum 2 tissues
+fTau <- function(x)
+{
+	if(all(!is.na(x)))
+ 	{
+ 		if(min(x, na.rm=TRUE) >= 0)
+		{
+ 			if(max(x)!=0)
+ 			{
+ 				x <- (1-(x/max(x)))
+ 				res <- sum(x, na.rm=TRUE)
+ 				res <- res/(length(x)-1)
+ 			} else {
+ 				res <- 0
+ 			}
+ 		} else {
+ 		res <- NA
+ 		#print("Expression values have to be positive!")
+ 		} 
+ 	} else {
+ 		res <- NA
+ 		#print("No data for this gene avalable.")
+ 	} 
+ 	return(res)
+}
+###***###***###
+TissuerpkmMatrixmean<-fReplicateMean(TissuerpkmMatrix,Tissues,1)
+print(summary(TissuerpkmMatrixmean))
+geTau <- apply(TissuerpkmMatrixmean, 1, fTau) # 1 means row direction,get a one way vector, max 1 means genes only expressed in one tissue,genes with express value !=0.
+#### filter tissue specifity genes from Tau resuls
+TsG<-function(NorM,Tauvalue,thrsF)#NorM is fReplicateMean normalized matrix,thrsF if gene filter threshold thrsF=1 means strictly Tissue specifity expression, ie expression only in one Tissue/DeStage
+{
+GM<-matrix(list(),nrow = dim(NorM)[2], ncol =1)# GM is the genes in each Tiss/Devstage
+for(i in 1:length(geTau))
+{
+if(geTau[i]>=thrsF)
+{
+gExVs<-NorM[i,] # get all exp values of the gene 
+if(thrsF==1)
+{
+tempMax<-max(gExVs)
+indx<-which(gExVs==tempMax)
+temp<-c(GM[[indx]],rownames(NorM)[i])
+GM[[indx]]<-temp
+}else
+{
+tempQ<-quantile(gExVs)[4]# 75% quantile value
+indx2<-which(gExVs>tempQ)
+for(j in 1:length(indx2))
+{
+temp<-c(GM[[indx2[j]]],rownames(NorM)[i])
+GM[[indx2[j]]]<-temp
+}
+}
+}
+}
+return (GM)
+}
+
+Tissueresults<-TsG(TissuerpkmMatrixmean,geTau,0.9)
+write.table(Tissueresults,file="Tissueresults.txt",row.names=T,sep="\t")
+
+#Figures for Tissue Specific genes
+### Figure 1: geTau thrs change and tissue specific gene number
+thrs<-c(1,0.95,0.9,0.85,0.8)
+GNum<-matrix(,nrow=length(Tissues),ncol=length(thrs))
+col<-1 # col number
+for(val in thrs)
+{
+Tissueresults<-TsG(TissuerpkmMatrixmean,geTau,val)
+temp<-c()
+for(i in 1:length(Tissueresults))
+{
+temp<-c(temp,length(Tissueresults[[i]]))
+}
+GNum[,col]<-temp
+col<-col+1
+}
+rownames(GNum)<-Tissues
+colnames(GNum)<-thrs
+write.table(GNum,file="Tissue specific GeneNumber under diff thrs.txt",row.names=T,sep="\t")
+barplot(GNum, beside=T,main="Tissue gene specific number under different threshold", col=rainbow(length(Tissues)),xlab="threshold",ylab="counts")#las change label direction)
+## we choose thrs=0.9 ,0.8 is usually as others do.
+### Figure 2: Total number of genes detetected in Tissues, and their appear times
+Tissueresults<-TsG(TissuerpkmMatrixmean,geTau,0.9)
+#write.table(Tissueresults,file="Tissueresults0.9.txt",row.names=T,sep="\t")
+GApp<-c()
+for(i in 1:length(Tissueresults))
+{
+GApp<-c(GApp,Tissueresults[[i]])
+}
+TissGene<-unique(GApp) ## with thrs=0.9 we get total 5838 genes with Develop stages specific
+Ap<-c()
+ApM<-matrix(,nrow=length(TissGene),ncol=1)
+for(i in 1:length(TissGene))
+{
+teminx<-which(GApp==TissGene[i])
+Ap<-c(Ap,length(teminx))
+}
+ApM[,1]<-Ap
+rownames(ApM)<-TissGene
+colnames(ApM)<-"Count"
+write.table(ApM,file="Gene Appearance Times in Tissues.txt",row.names=T,sep="\t")
+
+ApT<-unique(Ap)
+GApT<-c()
+GApTM<-matrix(,nrow=length(ApT),ncol=1)
+for(i in 1:length(ApT))
+{
+teminx<-which(Ap==ApT[i])
+GApT<-c(GApT,length(teminx))
+}
+GApTM[,1]<-GApT
+rownames(GApTM)<-ApT
+colnames(GApTM)<-"Gene Number"
+write.table(GApTM,file="Gene Appearance Times in Tissues statistic.txt",row.names=T,sep="\t")
+
+
+#### Figure3: Common genes between any two tissues, clustered heatmap 
+ComGMatrix<-matrix(0,nrow = length(Tissues), ncol =length(Tissues))
+for(i in 1:length(Tissueresults))
+{
+for(j in i:length(Tissueresults))
+{
+temcom<-length(intersect(Tissueresults[[i]],Tissueresults[[j]]))
+ComGMatrix[i,j]<-temcom 
+ComGMatrix[j,i]<-temcom
+}
+}
+library("gplots")
+#result <- heatmap.2(mtscaled, Rowv=T, scale='none', dendrogram="row", symm = T, col = brewer.pal(9,"Reds"))
+library(ComplexHeatmap)
+colnames(ComGMatrix)<-Tissues
+rownames(ComGMatrix)<-Tissues
+Heatmap(ComGMatrix, name = "Common Genes between different Tissues", row_names_gp = gpar(fontsize = 6),column_names_gp = gpar(fontsize = 6))
+
+
+#### GO enrichment of each tissue specific SSPs
+library(topGO)
+geneID2GO <- readMappings(file = "C:/Users/sulin/Desktop/geneid2go2.map")
+probeNames <- names(geneID2GO)
+for(i in 1:length(Tissueresults))
+{
+AllDifg= Tissueresults[[i]]
+geneList <- factor(as.integer(probeNames %in% AllDifg))
+names(geneList) <- probeNames
+str(geneList)
+GOdata <- new("topGOdata", ontology = "BP", allGenes = geneList,annot = annFUN.gene2GO, gene2GO = geneID2GO)
+resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+test.stat <- new("classicScore", testStatistic = GOKSTest, name = "KS tests")
+resultGO <- getSigGroups(GOdata, test.stat)
+test.stat <- new("weightCount", testStatistic = GOFisherTest, name = "Fisher test", sigRatio = "ratio")
+resultWeight <- getSigGroups(GOdata, test.stat)
+resulttopGO<- GenTable(GOdata, classic = resultFisher, KS = resultGO, weight = resultWeight,orderBy = "weight", ranksOf = "classic", topNodes = 20)
+write.table(resulttopGO[resulttopGO$classic<0.01,],file=paste("Gene_Tissue",i,"_Gene_GO_Enrichment.txt",sep=""),row.names = FALSE, col.names =TRUE)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##### find common elements
+com<-intersect(GMresults[58],GMresults[58])
+
+
+
+
+
+
+###tissue
+Tisnum<-c()
+for(i in 1:length(tissuesNames))
+{
+inx<-which(colnames(rpkmMatrix)==tissuesNames[i])
+Tisnum<-c(Tisnum,length(inx))
+}
+barplot(Tisnum)
+pie(Tisnum)
+
+
+#### end
 
 
 
