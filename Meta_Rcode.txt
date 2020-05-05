@@ -12,47 +12,7 @@ row.names(counts) <- counts.files[[1]]$V1
 #write.table(counts ,file=paste("DeStage","_Exp_count.txt",sep=""),row.names=T, sep="\t")
 #### end
 
-############ https://www.biostars.org/p/166838/ ### online methods
-##rpkm normalization by edgeR packag
-# i need a file containing gene length that i extracted from featurecounts tool output
-# reading gene length file
-mycounts1 <- read.csv("length.txt", stringsAsFactors = FALSE)
-# read as numeric
-mycounts1 <- as.numeric(mycounts1$Length)
-# transposing the gene length file
-tmycounts1 <- t(mycounts1)
-# setting as numeric
-sapply(tmycounts1, class)
-# reading the rawcounts file
-mycounts <- read.table("rawcounts.txt", header = T, sep = "\t")
-# watching the head of uploaded file
-head(mycounts[,1:4])
-# watching the dimension of matrix
-dim(mycounts)
-# assigning the column one as mycounts rowname
-rownames(mycounts)<- mycounts[,1]
-# read as matrix
-as.matrix(mycounts)
-# viewing mycounts class
-class(mycounts)
-# setting as numeric
-sapply(mycounts, class)
-# removing the column on
-mycounts <- mycounts[,-1]
-# watching the head of rawcounts file
-head(mycounts[,1:4])
-# applying edgeR function
-library(edgeR)
-# assigning the rawcounts to a new variable
-d <- DGEList(counts=mycounts)
-# reading gene length file as a matrix
-d$genes$Length <- c(tmycounts1)
-# rpkm function
-mycounts <- rpkm(d)
-# writing the result
-write.table(mycounts, file = "rpkm.txt", dec = ".", sep = "\t", quote = FALSE)
 
-#### end
 
 
 Soyban Development stages analysis
